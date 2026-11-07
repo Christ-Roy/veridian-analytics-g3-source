@@ -1,0 +1,562 @@
+import {
+  BasePayload,
+  ScriptConfig,
+  TrackingPayload,
+  WebVitalsData,
+  SessionReplayBatch,
+  ButtonClickProperties,
+  CopyProperties,
+  FormSubmitProperties,
+  InputChangeProperties,
+} from "./types.js";
+import { findMatchingPattern } from "./utils.js";
+import { SessionReplayRecorder } from "./sessionReplay.js";
+import { getBotScore, getBotSignalMask } from "./botSignals.js";
+
+const FEATURE_FLAG_REQUEST_TIMEOUT_MS = 2000;
+
+export class Tracker {
+  private config: ScriptConfig;
+  private customUserId: string | null = null;
+  private sessionReplayRecorder?: SessionReplayRecorder;
+  private errorDedupeCache: Map<string, number> = new Map();
+  private errorDedupeLastCleanup = 0;
+  private exposedFeatureFlags = new Set<string>();
+  constructor(config: ScriptConfig) {
+    this.config = config;
+    this.loadUserId();
+
+    if (config.enableSessionReplay) {
+      this.initializeSessionReplay();
+    }
+  }
+
+  private serializeFeatureFlagValue(value: unknown): string {
+    if (value === null || value === undefined) return "";
+    if (typeof value === "string") return value;
+    if (typeof value === "number" || typeof value === "boolean") return String(value);
+
+    try {
+      return JSON.stringify(value);
+    } catch (e) {
+      return "";
+    }
+  }
+
+  private getFeatureFlagEventPayload(): Record<string, string> {
+    const payload: Record<string, string> = {};
+
+    for (const [key, assignment] of Object.entries(this.config.featureFlags || {})) {
+      payload[key] = this.serializeFeatureFlagValue(assignment.value);
+    }
+
+    return payload;
+  }
+
+  private getCurrentUrlContext() {
+    const url = new URL(window.location.href);
+    const pathname = url.hash && url.hash.startsWith("#/") ? url.hash.substring(1) : url.pathname;
+
+    return {
+      hostname: url.hostname,
+      pathname,
+      querystring: url.search,
+      query: Object.fromEntries(url.searchParams.entries()),
+      referrer: document.referrer,
+      language: navigator.language,
+      screenWidth: screen.width,
+      screenHeight: screen.height,
+    };
+  }
+
+  private async refreshFeatureFlags(): Promise<void> {
+    if (!this.config.featureFlagsEnabled) return;
+
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), FEATURE_FLAG_REQUEST_TIMEOUT_MS);
+
+    try {
+      const response = await fetch(`${this.config.analyticsHost}/site/${this.config.siteId}/feature-flags/evaluate`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          anonymousId: this.config.visitorId,
+          identifiedUserId: this.customUserId || undefined,
+          ...this.getCurrentUrlContext(),
+        }),
+        mode: "cors",
+        credentials: "omit",
+        keepalive: true,
+        signal: controller.signal,
+      });
+
+      if (!response.ok) return;
+      const data = await response.json();
+      this.config.featureFlags = data?.flags && typeof data.flags === "object" ? data.flags : {};
+      if (data?.featureFlagsEnabled === false) {
+        this.config.featureFlagsEnabled = false;
+      }
+    } catch (e) {
+      // Feature flag refresh is best-effort and should never affect analytics collection.
+    } finally {
+      window.clearTimeout(timeout);
+    }
+  }
+
+  private loadUserId(): void {
+    try {
+      const storedUserId = localStorage.getItem(`${this.config.namespace}-user-id`);
+      if (storedUserId) {
+        this.customUserId = storedUserId;
+      }
+    } catch (e) {
+      // localStorage not available
+    }
+  }
+
+  private async initializeSessionReplay(): Promise<void> {
+    try {
+      this.sessionReplayRecorder = new SessionReplayRecorder(this.config, this.customUserId || "", batch =>
+        this.sendSessionReplayBatch(batch)
+      );
+      await this.sessionReplayRecorder.initialize();
+    } catch (error) {
+      console.error("Failed to initialize session replay:", error);
+    }
+  }
+
+  private async sendSessionReplayBatch(batch: SessionReplayBatch): Promise<void> {
+    try {
+      await fetch(`${this.config.analyticsHost}/session-replay/record/${this.config.siteId}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(batch),
+        mode: "cors",
+        keepalive: false, // Disable keepalive for large session replay requests
+      });
+    } catch (error) {
+      console.error("Failed to send session replay batch:", error);
+      throw error;
+    }
+  }
+
+  createBasePayload(): BasePayload | null {
+    const url = new URL(window.location.href);
+    let pathname = url.pathname;
+
+    // Handle hash-based SPA routing
+    if (url.hash && url.hash.startsWith("#/")) {
+      pathname = url.hash.substring(1);
+    }
+
+    // Check skip patterns
+    if (findMatchingPattern(pathname, this.config.skipPatterns)) {
+      return null;
+    }
+
+    // Apply mask patterns
+    const maskMatch = findMatchingPattern(pathname, this.config.maskPatterns);
+    if (maskMatch) {
+      pathname = maskMatch;
+    }
+
+    const payload: BasePayload = {
+      site_id: this.config.siteId,
+      hostname: url.hostname,
+      pathname: pathname,
+      querystring: this.config.trackQuerystring ? url.search : "",
+      screenWidth: screen.width,
+      screenHeight: screen.height,
+      language: navigator.language,
+      page_title: document.title,
+      referrer: document.referrer,
+      _bs: getBotScore(),
+      _bsm: getBotSignalMask(),
+    };
+
+    if (this.customUserId) {
+      payload.user_id = this.customUserId;
+    }
+
+    if (this.config.tag) {
+      payload.tag = this.config.tag;
+    }
+
+    // Identité durable du navigateur (UUID en localStorage). Sans elle, le
+    // serveur retombe sur une empreinte IP + User-Agent, qui casse dès qu'on
+    // passe du wifi à la 4G ou que le navigateur se met à jour, et qui fusionne
+    // à l'inverse deux personnes derrière un même NAT. Les visiteurs uniques
+    // et la rétention étaient donc faux dans les deux sens.
+    payload.anonymous_id = this.config.visitorId;
+
+    const featureFlagPayload = this.getFeatureFlagEventPayload();
+    if (Object.keys(featureFlagPayload).length > 0) {
+      payload.feature_flags = featureFlagPayload;
+    }
+
+    return payload;
+  }
+
+  async sendTrackingData(payload: TrackingPayload): Promise<void> {
+    try {
+      await fetch(`${this.config.analyticsHost}/track`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+        mode: "cors",
+        keepalive: true,
+      });
+    } catch (error) {
+      console.error("Failed to send tracking data:", error);
+    }
+  }
+
+  track(eventType: TrackingPayload["type"], eventName: string = "", properties: Record<string, any> = {}): void {
+    if (eventType === "custom_event" && (!eventName || typeof eventName !== "string")) {
+      console.error("Event name is required and must be a string for custom events");
+      return;
+    }
+
+    const basePayload = this.createBasePayload();
+    if (!basePayload) {
+      return; // Skip tracking
+    }
+
+    const typesWithProperties = [
+      "custom_event",
+      "outbound",
+      "error",
+      "button_click",
+      "copy",
+      "form_submit",
+      "input_change",
+    ];
+    const payload: TrackingPayload = {
+      ...basePayload,
+      type: eventType,
+      event_name: eventName,
+      properties: typesWithProperties.includes(eventType) ? JSON.stringify(properties) : undefined,
+    };
+
+    this.sendTrackingData(payload);
+  }
+
+  trackPageview(): void {
+    this.track("pageview");
+  }
+
+  trackEvent(name: string, properties: Record<string, any> = {}): void {
+    this.track("custom_event", name, properties);
+  }
+
+  getFeatureFlag<T = unknown>(key: string, fallback?: T): T {
+    const assignment = this.config.featureFlags?.[key];
+
+    if (!assignment) {
+      return fallback as T;
+    }
+
+    const exposureKey = `${key}:${assignment.version}:${this.serializeFeatureFlagValue(assignment.value)}`;
+    if (!this.exposedFeatureFlags.has(exposureKey)) {
+      this.exposedFeatureFlags.add(exposureKey);
+      this.trackEvent("feature_flag_exposure", {
+        key,
+        value: this.serializeFeatureFlagValue(assignment.value),
+        version: assignment.version,
+        reason: assignment.reason,
+      });
+    }
+
+    return assignment.value as T;
+  }
+
+  getFeatureFlags(): Record<string, unknown> {
+    return Object.fromEntries(
+      Object.entries(this.config.featureFlags || {}).map(([key, assignment]) => [key, assignment.value])
+    );
+  }
+
+  getFeatureFlagPayload<T = unknown>(key: string, fallback?: T): T {
+    const assignment = this.config.featureFlags?.[key];
+
+    if (!assignment || assignment.payload === undefined) {
+      return fallback as T;
+    }
+
+    return assignment.payload as T;
+  }
+
+  getFeatureFlagPayloads(): Record<string, unknown> {
+    return Object.fromEntries(
+      Object.entries(this.config.featureFlags || {})
+        .filter(([, assignment]) => assignment.payload !== undefined)
+        .map(([key, assignment]) => [key, assignment.payload])
+    );
+  }
+
+  trackOutbound(url: string, text: string = "", target: string = "_self"): void {
+    this.track("outbound", "", { url, text, target });
+  }
+
+  trackWebVitals(vitals: WebVitalsData): void {
+    const basePayload = this.createBasePayload();
+    if (!basePayload) {
+      return;
+    }
+
+    const payload: TrackingPayload = {
+      ...basePayload,
+      type: "performance",
+      event_name: "web-vitals",
+      ...vitals,
+    };
+
+    this.sendTrackingData(payload);
+  }
+
+  trackError(error: Error, additionalInfo: Record<string, any> = {}): void {
+    // Ignore known noisy browser warnings that aren't actionable app errors.
+    const message = error?.message || "";
+    if (
+      message.includes("ResizeObserver loop completed with undelivered notifications") ||
+      message.includes("ResizeObserver loop limit exceeded")
+    ) {
+      return;
+    }
+
+    // Industry-standard filtering: Only track errors from the same origin to avoid noise from third-party scripts
+    const currentOrigin = window.location.origin;
+    const filename = additionalInfo.filename || "";
+    const errorStack = error.stack || "";
+
+    // Primary check: Use filename if available (most reliable)
+    if (filename) {
+      try {
+        const fileUrl = new URL(filename);
+        if (fileUrl.origin !== currentOrigin) {
+          return; // Skip third-party script errors
+        }
+      } catch (e) {
+        // If filename is not a valid URL, it might be a relative path or browser-generated
+        // In this case, we'll continue to the stack check
+      }
+    }
+
+    // Fallback check: Use stack trace if filename check was inconclusive
+    else if (errorStack) {
+      // Check if stack contains any reference to the current origin
+      if (!errorStack.includes(currentOrigin)) {
+        return; // Skip third-party script errors
+      }
+    }
+
+    // If neither filename nor stack can determine origin, track the error
+    // This covers cases like NetworkError where the source is unclear but could be first-party
+
+    // Dedupe identical errors within a short window to prevent spam.
+    const dedupeKeyParts = [
+      error.name || "Error",
+      message,
+      additionalInfo.filename || "",
+      additionalInfo.lineno ?? "",
+      additionalInfo.colno ?? "",
+    ];
+    const dedupeKey = dedupeKeyParts.join("|");
+    const now = Date.now();
+    const dedupeWindowMs = 60_000;
+    const lastSeen = this.errorDedupeCache.get(dedupeKey);
+    if (lastSeen && now - lastSeen < dedupeWindowMs) {
+      return;
+    }
+    this.errorDedupeCache.set(dedupeKey, now);
+
+    // Periodically prune old keys to avoid unbounded growth.
+    const pruneAfterMs = 10 * 60_000;
+    if (now - this.errorDedupeLastCleanup > dedupeWindowMs) {
+      for (const [key, ts] of this.errorDedupeCache.entries()) {
+        if (now - ts > pruneAfterMs) {
+          this.errorDedupeCache.delete(key);
+        }
+      }
+      this.errorDedupeLastCleanup = now;
+    }
+
+    const errorProperties: Record<string, any> = {
+      message: error.message?.substring(0, 500) || "Unknown error", // Truncate to 500 chars
+      stack: errorStack.substring(0, 2000) || "", // Truncate to 2000 chars
+    };
+
+    // Only include properties if they have meaningful values
+    if (filename) {
+      errorProperties.fileName = filename;
+    }
+
+    if (additionalInfo.lineno) {
+      const lineNum =
+        typeof additionalInfo.lineno === "string" ? parseInt(additionalInfo.lineno, 10) : additionalInfo.lineno;
+      if (lineNum && lineNum !== 0) {
+        errorProperties.lineNumber = lineNum;
+      }
+    }
+
+    if (additionalInfo.colno) {
+      const colNum =
+        typeof additionalInfo.colno === "string" ? parseInt(additionalInfo.colno, 10) : additionalInfo.colno;
+      if (colNum && colNum !== 0) {
+        errorProperties.columnNumber = colNum;
+      }
+    }
+
+    // Add any other additional info
+    for (const key in additionalInfo) {
+      if (!["lineno", "colno"].includes(key) && additionalInfo[key] !== undefined) {
+        errorProperties[key] = additionalInfo[key];
+      }
+    }
+
+    this.track("error", error.name || "Error", errorProperties);
+  }
+
+  trackButtonClick(properties: ButtonClickProperties): void {
+    this.track("button_click", "", properties);
+  }
+
+  trackCopy(properties: CopyProperties): void {
+    this.track("copy", "", properties);
+  }
+
+  trackFormSubmit(properties: FormSubmitProperties): void {
+    this.track("form_submit", "", properties);
+  }
+
+  trackInputChange(properties: InputChangeProperties): void {
+    this.track("input_change", "", properties);
+  }
+
+  identify(userId: string, traits?: Record<string, unknown>): void {
+    if (typeof userId !== "string" || userId.trim() === "") {
+      console.error("User ID must be a non-empty string");
+      return;
+    }
+
+    this.customUserId = userId.trim();
+    try {
+      localStorage.setItem(`${this.config.namespace}-user-id`, this.customUserId);
+    } catch (e) {
+      console.warn("Could not persist user ID to localStorage");
+    }
+
+    // Send identify event to server (creates alias and stores traits)
+    void this.sendIdentifyEvent(this.customUserId, traits, true).then(() => this.refreshFeatureFlags());
+
+    // Update session replay recorder with new user ID
+    if (this.sessionReplayRecorder) {
+      this.sessionReplayRecorder.updateUserId(this.customUserId);
+    }
+  }
+
+  setTraits(traits: Record<string, unknown>): void {
+    if (!traits || typeof traits !== "object") {
+      console.error("Traits must be an object");
+      return;
+    }
+
+    const userId = this.customUserId;
+    if (!userId) {
+      console.warn("Cannot set traits without identifying user first. Call identify() first.");
+      return;
+    }
+
+    void this.sendIdentifyEvent(userId, traits, false).then(() => this.refreshFeatureFlags());
+  }
+
+  private async sendIdentifyEvent(
+    userId: string,
+    traits?: Record<string, unknown>,
+    isNewIdentify: boolean = true
+  ): Promise<void> {
+    try {
+      await fetch(`${this.config.analyticsHost}/identify`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          site_id: this.config.siteId,
+          user_id: userId,
+          // Indispensable : sans lui, le serveur recalcule une empreinte
+          // IP + User-Agent pour retrouver les événements à rattacher, alors
+          // que ceux-ci portent désormais l'identité du localStorage. Le
+          // rattachement rétroactif ne trouverait plus rien.
+          anonymous_id: this.config.visitorId,
+          traits: traits,
+          is_new_identify: isNewIdentify,
+        }),
+        mode: "cors",
+        keepalive: true,
+      });
+    } catch (error) {
+      console.error("Failed to send identify event:", error);
+    }
+  }
+
+  clearUserId(): void {
+    this.customUserId = null;
+    try {
+      localStorage.removeItem(`${this.config.namespace}-user-id`);
+    } catch (e) {
+      // localStorage not available
+    }
+
+    if (this.sessionReplayRecorder) {
+      this.sessionReplayRecorder.updateUserId("");
+    }
+
+    void this.refreshFeatureFlags();
+  }
+
+  getUserId(): string | null {
+    return this.customUserId;
+  }
+
+  // Session Replay methods
+  startSessionReplay(): void {
+    if (this.sessionReplayRecorder) {
+      this.sessionReplayRecorder.startRecording();
+    } else {
+      console.warn("Session replay not initialized");
+    }
+  }
+
+  stopSessionReplay(): void {
+    if (this.sessionReplayRecorder) {
+      this.sessionReplayRecorder.stopRecording();
+    }
+  }
+
+  isSessionReplayActive(): boolean {
+    return this.sessionReplayRecorder?.isActive() ?? false;
+  }
+
+  // Handle page changes for SPA
+  onPageChange(): void {
+    void this.refreshFeatureFlags();
+
+    if (this.sessionReplayRecorder) {
+      this.sessionReplayRecorder.onPageChange();
+    }
+  }
+
+  // Cleanup
+  cleanup(): void {
+    if (this.sessionReplayRecorder) {
+      this.sessionReplayRecorder.cleanup();
+    }
+  }
+}

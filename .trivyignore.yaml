@@ -1,0 +1,58 @@
+# Vulnérabilités que Trivy signale et qu'on accepte, avec leur raison et leur
+# DATE D'EXPIRATION.
+#
+# 🔴 UNE LIGNE SANS RAISON NI EXPIRATION N'A RIEN À FAIRE ICI. Une dispense
+# muette est un oubli déguisé, et une dispense éternelle finit par couvrir une
+# vraie faille. `expired_at` fait rougir la CI d'elle-même à la date dite, ce
+# qui force à reprendre la décision au lieu de la laisser vieillir.
+#
+# Ajouter une entrée est une DÉCISION, pas une mise à jour. Elle se justifie
+# dans le commit qui l'ajoute, et la justification doit dire deux choses : ce
+# qui rend le risque acceptable AUJOURD'HUI, et ce qui lèverait l'exception.
+
+vulnerabilities:
+  # ── util-linux (libblkid, libmount, libuuid) — 7 avis, tous HIGH ───────────
+  #
+  # POURQUOI ON NE CORRIGE PAS : il n'y a rien à corriger de notre côté.
+  # Mesuré le 2026-09-05, pas supposé :
+  #   docker run --rm node:24-alpine apk policy libblkid
+  #     → 2.42.1-r0, seule version publiée dans alpine/v3.24/main
+  # La version corrigée que Trivy nomme (2.42.3-r0) n'existe pas encore dans la
+  # branche Alpine de cette image de base. Le `apk --no-cache upgrade` du
+  # Dockerfile est déjà là et ne peut rien y faire.
+  #
+  # POURQUOI LE RISQUE EST ACCEPTABLE : les sept avis portent sur les PROGRAMMES
+  # de util-linux — `mount(8)` en SUID, `nsenter --join-cgroup`, les montages
+  # liés restreints. Or ces programmes sont ABSENTS de l'image. Mesuré :
+  #   docker run --rm node:24-alpine sh -c 'ls -l /bin/mount /usr/bin/nsenter'
+  #     → tous deux sont des liens symboliques vers /bin/busybox
+  #   docker run --rm node:24-alpine apk list --installed | grep -c '^util-linux-'
+  #     → 0
+  # Seules les bibliothèques partagées sont présentes, en dépendance
+  # transitive. Le code incriminé n'est pas atteignable : il n'y a ni binaire
+  # `mount` SUID, ni `nsenter` de util-linux dans ce conteneur.
+  #
+  # CE QUI LÈVERAIT L'EXCEPTION : la publication de util-linux 2.42.3-r0 (ou
+  # plus récent) dans la branche Alpine de `node:24-alpine`. À revérifier avec
+  # la commande `apk policy` ci-dessus. L'expiration force ce contrôle.
+  - id: CVE-2026-53612
+    statement: "util-linux TOCTOU dans mount(8) — programme absent de l'image (busybox), pas de correctif publié dans alpine/v3.24"
+    expired_at: 2026-11-01
+  - id: CVE-2026-53613
+    statement: "util-linux TOCTOU dans mount(8) — programme absent de l'image (busybox), pas de correctif publié dans alpine/v3.24"
+    expired_at: 2026-11-01
+  - id: CVE-2026-53614
+    statement: "util-linux mount(8) SUID et nosuid/noexec — programme absent de l'image (busybox), pas de correctif publié"
+    expired_at: 2026-11-01
+  - id: CVE-2026-76642
+    statement: "util-linux assistant de montage externe — programme absent de l'image (busybox), pas de correctif publié"
+    expired_at: 2026-11-01
+  - id: CVE-2026-78408
+    statement: "util-linux nsenter --join-cgroup — nsenter est un lien vers busybox dans cette image, pas de correctif publié"
+    expired_at: 2026-11-01
+  - id: CVE-2026-78409
+    statement: "util-linux X-mount.subdir — programme mount absent de l'image (busybox), pas de correctif publié"
+    expired_at: 2026-11-01
+  - id: CVE-2026-78410
+    statement: "util-linux montages liés restreints — programme mount absent de l'image (busybox), pas de correctif publié"
+    expired_at: 2026-11-01

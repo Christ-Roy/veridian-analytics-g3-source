@@ -1,0 +1,238 @@
+"use client";
+
+import { useExtracted } from "next-intl";
+import { useMemo, useState } from "react";
+import { useGetGoalTimeSeries } from "../../../api/analytics/hooks/goals/useGetGoalTimeSeries";
+import { useGetGoals } from "../../../api/analytics/hooks/goals/useGetGoals";
+import { GoalTimeSeriesPoint } from "../../../api/analytics/endpoints";
+import { BucketSelection } from "../../../components/BucketSelection";
+import { DisabledOverlay } from "../../../components/DisabledOverlay";
+import { NothingFound } from "../../../components/NothingFound";
+import { Pagination } from "../../../components/pagination";
+import { useSetPageTitle } from "../../../hooks/useSetPageTitle";
+import { useStore } from "../../../lib/store";
+import { GOALS_PAGE_FILTERS } from "../../../lib/filterGroups";
+import { SubHeader } from "../components/SubHeader/SubHeader";
+import CreateGoalButton from "./components/CreateGoalButton";
+import GoalsList from "./components/GoalsList";
+import { Target } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { ExternalLink } from "../../../components/ExternalLink";
+import { GoalBarChartSkeleton } from "./components/skeleton";
+import { BRAND } from "../../../lib/brand";
+
+// Goal card skeleton component
+const GoalCardSkeleton = () => (
+  <div className="rounded-lg bg-white dark:bg-neutral-900 border border-neutral-100 dark:border-neutral-800 overflow-hidden relative animate-pulse">
+    <div className="px-4 py-3 flex gap-3 flex-row items-center mb-1">
+      {/* Left section skeleton */}
+      <div className="w-full min-w-0 md:flex-1 md:pr-4">
+        <div className="flex items-center gap-2">
+          <div className="w-4 h-4 bg-neutral-200 dark:bg-neutral-800 rounded"></div>
+          <div className="h-5 bg-neutral-200 dark:bg-neutral-800 rounded w-36"></div>
+        </div>
+        <div className="flex items-center gap-1 mt-2">
+          <div className="h-3 bg-neutral-200 dark:bg-neutral-800 rounded w-12"></div>
+          <div className="h-5 bg-neutral-200 dark:bg-neutral-800 rounded w-32 px-1 py-0.5"></div>
+        </div>
+      </div>
+
+      {/* Center section skeleton */}
+      <div className="w-full md:flex-1 flex justify-start md:justify-center">
+        <div className="grid w-full grid-cols-1 gap-3 sm:grid-cols-2 md:w-auto md:gap-4">
+          <div className="flex items-center gap-3">
+            <GoalBarChartSkeleton />
+            <div className="min-w-[86px] text-left">
+              <div className="h-5 bg-neutral-200 dark:bg-neutral-800 rounded w-14"></div>
+              <div className="h-3 bg-neutral-200 dark:bg-neutral-800 rounded w-20 mt-1"></div>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <GoalBarChartSkeleton />
+            <div className="min-w-[104px] text-left">
+              <div className="h-5 bg-neutral-200 dark:bg-neutral-800 rounded w-16"></div>
+              <div className="h-3 bg-neutral-200 dark:bg-neutral-800 rounded w-24 mt-1"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Right section skeleton */}
+      <div className="flex shrink-0 justify-end gap-1 md:pl-4">
+        <div className="w-7 h-7 bg-neutral-200 dark:bg-neutral-800 rounded"></div>
+        <div className="w-7 h-7 bg-neutral-200 dark:bg-neutral-800 rounded"></div>
+      </div>
+    </div>
+    <div className="bg-neutral-100 dark:bg-neutral-700 h-1.5 w-full"></div>
+  </div>
+);
+
+export default function GoalsPage() {
+  const t = useExtracted();
+  useSetPageTitle("Goals");
+
+  const { site } = useStore();
+  const [searchQuery, setSearchQuery] = useState("");
+  const [pagination, setPagination] = useState({
+    pageIndex: 0, // TablePagination uses 0-based indexing
+    pageSize: 10, // Show 10 goals per page
+  });
+
+  const { data: goalsData, isLoading } = useGetGoals({
+    page: pagination.pageIndex + 1, // API uses 1-based indexing
+    pageSize: pagination.pageSize,
+  });
+
+  // Filter goals based on search query
+  const filteredGoals = useMemo(() => {
+    if (!goalsData?.data) return [];
+    if (!searchQuery.trim()) return goalsData.data;
+
+    const query = searchQuery.toLowerCase();
+    return goalsData.data.filter(goal => {
+      // Search in goal name
+      if (goal.name?.toLowerCase().includes(query)) return true;
+
+      // Search in path pattern, event name, or autocapture value pattern
+      if (goal.goalType === "path" && goal.config.pathPattern?.toLowerCase().includes(query)) return true;
+      if (goal.goalType === "event" && goal.config.eventName?.toLowerCase().includes(query)) return true;
+      if (goal.config.valuePattern?.toLowerCase().includes(query)) return true;
+
+      // Search in event property key/value
+      if (
+        goal.config.eventPropertyKey?.toLowerCase().includes(query) ||
+        String(goal.config.eventPropertyValue)?.toLowerCase().includes(query)
+      ) {
+        return true;
+      }
+
+      return false;
+    });
+  }, [goalsData?.data, searchQuery]);
+
+  const goalIds = useMemo(() => filteredGoals.map(goal => goal.goalId), [filteredGoals]);
+
+  const { data: goalTimeSeries, isLoading: isLoadingGoalTimeSeries } = useGetGoalTimeSeries({
+    goalIds,
+  });
+
+  const timeSeriesByGoal = useMemo(() => {
+    const map = new Map<number, GoalTimeSeriesPoint[]>();
+
+    for (const point of goalTimeSeries ?? []) {
+      const points = map.get(point.goal_id) ?? [];
+      points.push(point);
+      map.set(point.goal_id, points);
+    }
+
+    return map;
+  }, [goalTimeSeries]);
+
+  // Create pagination controller for TablePagination
+  const paginationController = {
+    getState: () => ({ pagination }),
+    getCanPreviousPage: () => pagination.pageIndex > 0,
+    getCanNextPage: () => {
+      if (!goalsData?.meta) return false;
+      return pagination.pageIndex + 1 < goalsData.meta.totalPages;
+    },
+    getPageCount: () => goalsData?.meta?.totalPages || 1,
+    setPageIndex: (index: number) => {
+      setPagination(prev => ({ ...prev, pageIndex: index }));
+      // Scroll to top of page when changing pages
+      window.scrollTo({
+        top: 0,
+        behavior: "smooth",
+      });
+    },
+    previousPage: () => {
+      if (pagination.pageIndex > 0) {
+        setPagination(prev => ({ ...prev, pageIndex: prev.pageIndex - 1 }));
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }
+    },
+    nextPage: () => {
+      if (goalsData?.meta && pagination.pageIndex + 1 < goalsData.meta.totalPages) {
+        setPagination(prev => ({ ...prev, pageIndex: prev.pageIndex + 1 }));
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }
+    },
+  };
+
+  // Transform data for TablePagination
+  const paginationData = goalsData
+    ? {
+        items: goalsData.data,
+        total: goalsData.meta.total,
+      }
+    : undefined;
+
+  return (
+    <DisabledOverlay message="Goals" featurePath="goals" requiredPlan="basic">
+      <div className="p-2 md:p-4 max-w-[1400px] mx-auto space-y-3">
+        <SubHeader availableFilters={GOALS_PAGE_FILTERS} />
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-2">
+            <Input
+              placeholder={t("Filter goals")}
+              className="w-48"
+              isSearch
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+            />
+            <BucketSelection size="default" />
+          </div>
+          <CreateGoalButton siteId={Number(site)} />
+        </div>
+        {/* if site is not loaded, show skeleton */}
+        {isLoading || !site ? (
+          <div className="space-y-3">
+            {Array(3)
+              .fill(0)
+              .map((_, index) => (
+                <GoalCardSkeleton key={`skeleton-${index}`} />
+              ))}
+          </div>
+        ) : !goalsData || goalsData.data.length === 0 ? (
+          <NothingFound
+            icon={<Target className="w-10 h-10" />}
+            title={t("No goals found")}
+            description={
+              <span>
+                {t("Create your first conversion goal to start tracking important user actions.")}{" "}
+                <ExternalLink href={BRAND.urls.docs}>{t("Learn more")}</ExternalLink>
+              </span>
+            }
+            action={<CreateGoalButton siteId={Number(site)} />}
+          />
+        ) : filteredGoals.length === 0 ? (
+          <NothingFound
+            icon={<Target className="w-10 h-10" />}
+            title={t("No goals found")}
+            description={t('No goals match "{searchQuery}"', { searchQuery })}
+          />
+        ) : (
+          <div className="space-y-6">
+            <GoalsList
+              goals={filteredGoals}
+              siteId={Number(site)}
+              timeSeriesByGoal={timeSeriesByGoal}
+              isLoadingTimeSeries={isLoadingGoalTimeSeries}
+            />
+
+            {goalsData.meta.totalPages > 1 && !searchQuery && (
+              <Pagination
+                table={paginationController}
+                data={paginationData}
+                pagination={pagination}
+                setPagination={setPagination}
+                isLoading={isLoading}
+                itemName="goals"
+              />
+            )}
+          </div>
+        )}
+      </div>
+    </DisabledOverlay>
+  );
+}

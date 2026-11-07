@@ -1,0 +1,456 @@
+---
+title: Sending Events
+description: Track pageviews, custom events, performance, and errors from any platform using the HTTP API.
+full: true
+method: POST
+---
+
+import { TypeTable } from 'fumadocs-ui/components/type-table';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+<div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
+<div>
+
+```
+POST /api/track
+```
+
+Track pageviews, custom events, performance, and errors from server-side applications, mobile apps, or any platform. An API key is optional but recommended for server-side tracking — it bypasses bot detection and domain validation. IP addresses are resolved to geolocation and user agents are parsed for browser/OS/device info.
+
+### Request Body
+
+All parameters are sent in the request body as JSON.
+
+<TypeTable
+  type={{
+    site_id: {
+      description: 'Your site ID',
+      type: 'string',
+      required: true,
+    },
+    type: {
+      description: 'Event type',
+      type: 'string',
+      typeDescription: '"pageview" | "custom_event" | "performance" | "outbound" | "error"',
+      default: 'pageview',
+    },
+    pathname: {
+      description: 'Page path',
+      type: 'string',
+      typeDescription: 'Max 2048 chars',
+    },
+    hostname: {
+      description: 'Domain name',
+      type: 'string',
+      typeDescription: 'Max 253 chars',
+    },
+    page_title: {
+      description: 'Page title',
+      type: 'string',
+      typeDescription: 'Max 512 chars',
+    },
+    referrer: {
+      description: 'Referrer URL',
+      type: 'string',
+      typeDescription: 'Max 2048 chars',
+    },
+    user_id: {
+      description: 'Custom user identifier',
+      type: 'string',
+      typeDescription: 'Max 255 chars',
+    },
+    user_agent: {
+      description: 'Custom user agent string - will be parsed for browser/OS/device info',
+      type: 'string',
+      typeDescription: 'Max 512 chars',
+    },
+    ip_address: {
+      description: 'Custom IP for geolocation - will be resolved to location data',
+      type: 'string',
+      typeDescription: 'Valid IPv4 or IPv6 address',
+    },
+    querystring: {
+      description: 'Query parameters',
+      type: 'string',
+      typeDescription: 'Max 2048 chars',
+    },
+    language: {
+      description: 'Language code',
+      type: 'string',
+      typeDescription: 'e.g., "en", "es", "fr"',
+    },
+    screenWidth: {
+      description: 'Screen width in logical pixels (density-independent pixels)',
+      type: 'number',
+    },
+    screenHeight: {
+      description: 'Screen height in logical pixels (density-independent pixels)',
+      type: 'number',
+    },
+    event_name: {
+      description: 'Event name (required for custom events)',
+      type: 'string',
+      typeDescription: 'Max 256 chars',
+    },
+    properties: {
+      description: 'JSON string with event data (for custom events, outbound, error)',
+      type: 'string',
+      typeDescription: 'Max 2048 chars (4096 for error events)',
+    },
+    feature_flags: {
+      description: 'Optional map of feature flag keys to assigned values. Useful for server-side flag evaluation and filtering analytics by flag value.',
+      type: 'Record<string, string>',
+      typeDescription: 'Keys max 100 chars, values max 2048 chars',
+    },
+  }}
+/>
+
+#### Pageview
+
+Standard page view tracking. Set `type: "pageview"` (default).
+
+#### Custom Event
+
+Track custom events with optional properties. Set `type: "custom_event"`.
+
+<TypeTable
+  type={{
+    event_name: {
+      description: 'Name of the custom event',
+      type: 'string',
+      typeDescription: 'Max 256 chars',
+      required: true,
+    },
+    properties: {
+      description: 'Event data as JSON string',
+      type: 'string',
+      typeDescription: 'Valid JSON, max 2048 chars',
+    },
+  }}
+/>
+
+#### Performance
+
+Track Core Web Vitals. Set `type: "performance"`.
+
+<TypeTable
+  type={{
+    lcp: {
+      description: 'Largest Contentful Paint in milliseconds',
+      type: 'number',
+      typeDescription: 'nullable',
+    },
+    cls: {
+      description: 'Cumulative Layout Shift score',
+      type: 'number',
+      typeDescription: 'nullable, typically 0-1',
+    },
+    inp: {
+      description: 'Interaction to Next Paint in milliseconds',
+      type: 'number',
+      typeDescription: 'nullable',
+    },
+    fcp: {
+      description: 'First Contentful Paint in milliseconds',
+      type: 'number',
+      typeDescription: 'nullable',
+    },
+    ttfb: {
+      description: 'Time to First Byte in milliseconds',
+      type: 'number',
+      typeDescription: 'nullable',
+    },
+  }}
+/>
+
+#### Outbound
+
+Track outbound link clicks. Set `type: "outbound"`. Pass details in the `properties` JSON string.
+
+<TypeTable
+  type={{
+    url: {
+      description: 'Destination URL',
+      type: 'string',
+      required: true,
+    },
+    text: {
+      description: 'Link text content',
+      type: 'string',
+    },
+    target: {
+      description: 'Link target attribute',
+      type: 'string',
+      typeDescription: 'e.g., "_blank", "_self"',
+    },
+  }}
+/>
+
+#### Error
+
+Track JavaScript errors. Set `type: "error"`. `event_name` is the error type and `properties` carries the error details as a JSON string.
+
+<TypeTable
+  type={{
+    message: {
+      description: 'Error message',
+      type: 'string',
+      typeDescription: 'Max 500 chars',
+      required: true,
+    },
+    stack: {
+      description: 'Stack trace',
+      type: 'string',
+      typeDescription: 'Max 2000 chars',
+    },
+    fileName: {
+      description: 'File where error occurred',
+      type: 'string',
+    },
+    lineNumber: {
+      description: 'Line number',
+      type: 'number',
+    },
+    columnNumber: {
+      description: 'Column number',
+      type: 'number',
+    },
+  }}
+/>
+
+### Response
+
+<TypeTable
+  type={{
+    success: {
+      description: 'Whether the event was accepted',
+      type: 'boolean',
+    },
+  }}
+/>
+
+### Rate Limiting
+
+API keys are limited to **500 requests per 10 minutes**. Exceeding the limit returns a `429` status code.
+
+</div>
+<div className="flex flex-col gap-4">
+
+<Tabs items={['cURL', 'JavaScript', 'Python', 'PHP', 'Ruby', 'Go', 'Rust', 'Java', '.NET']}>
+  <Tab value="cURL">
+```bash title="Request"
+curl -X POST "https://app.rybbit.io/api/track" \
+  -H "Authorization: Bearer your_api_key_here" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "site_id": "1",
+    "type": "custom_event",
+    "pathname": "/checkout",
+    "event_name": "purchase",
+    "properties": "{\"amount\": 99.99, \"currency\": \"USD\"}"
+  }'
+```
+  </Tab>
+  <Tab value="JavaScript">
+```javascript title="Request"
+const response = await fetch('https://app.rybbit.io/api/track', {
+  method: 'POST',
+  headers: {
+    'Authorization': 'Bearer your_api_key_here',
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    site_id: '1',
+    type: 'custom_event',
+    pathname: '/checkout',
+    event_name: 'purchase',
+    properties: JSON.stringify({ amount: 99.99, currency: 'USD' })
+  })
+});
+
+const data = await response.json();
+```
+  </Tab>
+  <Tab value="Python">
+```python title="Request"
+import requests
+import json
+
+response = requests.post(
+    'https://app.rybbit.io/api/track',
+    json={
+        'site_id': '1',
+        'type': 'custom_event',
+        'pathname': '/checkout',
+        'event_name': 'purchase',
+        'properties': json.dumps({'amount': 99.99, 'currency': 'USD'})
+    },
+    headers={
+        'Authorization': 'Bearer your_api_key_here'
+    }
+)
+
+data = response.json()
+```
+  </Tab>
+  <Tab value="PHP">
+```php title="Request"
+$body = [
+    'site_id' => '1',
+    'type' => 'custom_event',
+    'pathname' => '/checkout',
+    'event_name' => 'purchase',
+    'properties' => json_encode(['amount' => 99.99, 'currency' => 'USD'])
+];
+
+$ch = curl_init();
+curl_setopt($ch, CURLOPT_URL, 'https://app.rybbit.io/api/track');
+curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+curl_setopt($ch, CURLOPT_POST, true);
+curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($body));
+curl_setopt($ch, CURLOPT_HTTPHEADER, [
+    'Authorization: Bearer your_api_key_here',
+    'Content-Type: application/json'
+]);
+
+$response = curl_exec($ch);
+curl_close($ch);
+
+$data = json_decode($response, true);
+```
+  </Tab>
+  <Tab value="Ruby">
+```ruby title="Request"
+require 'net/http'
+require 'json'
+
+uri = URI('https://app.rybbit.io/api/track')
+request = Net::HTTP::Post.new(uri)
+request['Authorization'] = 'Bearer your_api_key_here'
+request['Content-Type'] = 'application/json'
+request.body = {
+  site_id: '1',
+  type: 'custom_event',
+  pathname: '/checkout',
+  event_name: 'purchase',
+  properties: { amount: 99.99, currency: 'USD' }.to_json
+}.to_json
+
+response = Net::HTTP.start(uri.hostname, uri.port, use_ssl: true) do |http|
+  http.request(request)
+end
+
+data = JSON.parse(response.body)
+```
+  </Tab>
+  <Tab value="Go">
+```go title="Request"
+body := map[string]interface{}{
+    "site_id":    "1",
+    "type":       "custom_event",
+    "pathname":   "/checkout",
+    "event_name": "purchase",
+    "properties": `{"amount": 99.99, "currency": "USD"}`,
+}
+jsonBody, _ := json.Marshal(body)
+
+req, _ := http.NewRequest("POST", "https://app.rybbit.io/api/track", bytes.NewBuffer(jsonBody))
+req.Header.Set("Authorization", "Bearer your_api_key_here")
+req.Header.Set("Content-Type", "application/json")
+
+client := &http.Client{}
+resp, _ := client.Do(req)
+defer resp.Body.Close()
+
+var data map[string]interface{}
+json.NewDecoder(resp.Body).Decode(&data)
+```
+  </Tab>
+  <Tab value="Rust">
+```rust title="Request"
+let body = serde_json::json!({
+    "site_id": "1",
+    "type": "custom_event",
+    "pathname": "/checkout",
+    "event_name": "purchase",
+    "properties": r#"{"amount": 99.99, "currency": "USD"}"#
+});
+
+let client = reqwest::Client::new();
+let res = client
+    .post("https://app.rybbit.io/api/track")
+    .header("Authorization", "Bearer your_api_key_here")
+    .json(&body)
+    .send()
+    .await?;
+
+let data: serde_json::Value = res.json().await?;
+```
+  </Tab>
+  <Tab value="Java">
+```java title="Request"
+String json = """
+{
+  "site_id": "1",
+  "type": "custom_event",
+  "pathname": "/checkout",
+  "event_name": "purchase",
+  "properties": "{\"amount\": 99.99, \"currency\": \"USD\"}"
+}
+""";
+
+HttpClient client = HttpClient.newHttpClient();
+HttpRequest request = HttpRequest.newBuilder()
+    .uri(URI.create("https://app.rybbit.io/api/track"))
+    .header("Authorization", "Bearer your_api_key_here")
+    .header("Content-Type", "application/json")
+    .POST(HttpRequest.BodyPublishers.ofString(json))
+    .build();
+
+HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+```
+  </Tab>
+  <Tab value=".NET">
+```csharp title="Request"
+var body = new
+{
+    site_id = "1",
+    type = "custom_event",
+    pathname = "/checkout",
+    event_name = "purchase",
+    properties = JsonSerializer.Serialize(new { amount = 99.99, currency = "USD" })
+};
+
+using var client = new HttpClient();
+client.DefaultRequestHeaders.Add("Authorization", "Bearer your_api_key_here");
+
+var content = new StringContent(
+    JsonSerializer.Serialize(body),
+    Encoding.UTF8,
+    "application/json");
+
+var response = await client.PostAsync("https://app.rybbit.io/api/track", content);
+var data = await response.Content.ReadAsStringAsync();
+```
+  </Tab>
+</Tabs>
+
+```json title="Success"
+{
+  "success": true
+}
+```
+
+```json title="Error"
+{
+  "success": false,
+  "error": "Invalid payload",
+  "details": {
+    "fieldErrors": {},
+    "formErrors": ["Custom events require event_name"]
+  }
+}
+```
+
+</div>
+</div>

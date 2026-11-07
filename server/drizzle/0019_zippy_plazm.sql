@@ -1,0 +1,34 @@
+-- Le tableau de bord ÉPINGLÉ d'un site : celui que sa vue d'ensemble affiche
+-- en tête. C'est le pont qui remplace le codage d'une carte par client — une
+-- carte de conversion devient de la configuration, posée par API.
+--
+-- Au plus UN épinglé par site. L'invariant N'EST PAS une contrainte de base :
+-- il est tenu dans la même transaction que l'écriture, par
+-- `server/src/api/analytics/dashboards/epinglage.ts`. Une contrainte d'unicité
+-- partielle aurait REFUSÉ le second épinglage, alors que l'intention de
+-- l'utilisateur est claire — « celui-ci, pas l'autre ». Le serveur désépingle
+-- donc les autres au lieu de rendre une erreur.
+--
+-- 🔴 CETTE MIGRATION A ÉTÉ TAILLÉE À LA MAIN, ET IL FAUT SAVOIR POURQUOI.
+--
+-- `drizzle-kit generate` a produit, en plus de la colonne ci-dessous, un
+-- `CREATE TABLE "ads_cost_daily"` complet — une table que la migration 0018 crée
+-- déjà. Cause : le dernier instantané présent dans `meta/` était 0017, alors que
+-- le journal allait jusqu'à 0018. Les migrations 0018 (et 0017) ont été écrites
+-- à la main SANS régénérer leur instantané, donc l'outil a diffé le schéma
+-- courant contre un état antérieur et a proposé de recréer ce qui existe.
+--
+-- Livrée telle quelle, elle aurait échoué sur `CREATE TABLE` (sans
+-- `IF NOT EXISTS`) partout où 0018 était déjà passée, c'est-à-dire en staging
+-- et en production : le serveur ne redémarre pas, l'entrypoint lance les
+-- migrations AVANT l'application. Un déploiement mort au démarrage, pour une
+-- colonne booléenne.
+--
+-- Deux conséquences, gardées ensemble :
+--   1. seul l'ALTER est conservé ici ;
+--   2. l'instantané `meta/0019_snapshot.json` est celui que l'outil a généré,
+--      donc le premier depuis 0017 à décrire VRAIMENT la base. Le prochain
+--      `db:generate` partira d'un état juste et ne reproposera plus
+--      `ads_cost_daily`. Le piège est désamorcé pour la suite, pas seulement
+--      contourné pour ce coup-ci.
+ALTER TABLE "dashboards" ADD COLUMN "pinned" boolean DEFAULT false NOT NULL;

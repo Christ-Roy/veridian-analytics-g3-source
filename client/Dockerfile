@@ -1,0 +1,95 @@
+FROM node:24-alpine AS base
+
+# Install dependencies only when needed
+FROM base AS deps
+RUN apk add --no-cache libc6-compat
+WORKDIR /app
+
+# Copy shared package first
+COPY shared ./shared
+WORKDIR /app/shared
+RUN npm install && npm run build
+
+# Install client dependencies
+WORKDIR /app/client
+COPY client/package.json client/package-lock.json* ./
+RUN npm ci --legacy-peer-deps
+
+# Rebuild the source code only when needed
+FROM base AS builder
+WORKDIR /app
+COPY --from=deps /app/shared ./shared
+COPY --from=deps /app/client/node_modules ./client/node_modules
+COPY client/ ./client
+
+# Next.js collects completely anonymous telemetry data about general usage.
+# Learn more here: https://nextjs.org/telemetry
+ENV NEXT_TELEMETRY_DISABLED=1
+ARG NEXT_PUBLIC_BACKEND_URL
+ARG NEXT_PUBLIC_DISABLE_SIGNUP
+ARG NEXT_PUBLIC_CLOUD
+ARG NEXT_PUBLIC_TURNSTILE_SITE_KEY
+ARG NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
+ARG NEXT_PUBLIC_LITE_DASHBOARD
+ENV NEXT_PUBLIC_BACKEND_URL=${NEXT_PUBLIC_BACKEND_URL}
+ENV NEXT_PUBLIC_DISABLE_SIGNUP=${NEXT_PUBLIC_DISABLE_SIGNUP}
+ENV NEXT_PUBLIC_CLOUD=${NEXT_PUBLIC_CLOUD}
+ENV NEXT_PUBLIC_TURNSTILE_SITE_KEY=${NEXT_PUBLIC_TURNSTILE_SITE_KEY}
+ENV NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=${NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY}
+ENV NEXT_PUBLIC_DEPLOYMENT=${NEXT_PUBLIC_DEPLOYMENT}
+ENV NEXT_PUBLIC_LITE_DASHBOARD=${NEXT_PUBLIC_LITE_DASHBOARD}
+
+WORKDIR /app/client
+
+# npm installs the file:../shared dependency as a relative symlink
+# (node_modules/@rybbit/shared -> ../../../shared). Turbopack treats
+# /app/client as the project root and won't resolve packages through a symlink
+# that escapes it, and Next's standalone output tracing re-homes node_modules
+# at runtime. Materialize the package into a real directory instead — same fix
+# as the server image (commit 00a52750).
+RUN rm -rf node_modules/@rybbit/shared \
+ && mkdir -p node_modules/@rybbit/shared \
+ && cp -r /app/shared/package.json /app/shared/dist node_modules/@rybbit/shared/
+
+RUN npm run build
+
+# Production image, copy all the files and run next
+FROM base AS runner
+WORKDIR /app
+
+# apk upgrade : libcrypto3/libssl3 de la base accumulent leurs propres CVE
+# entre deux publications de l'image node.
+RUN apk --no-cache upgrade
+
+# npm n'est pas utilise a l'execution (CMD = node server.js). Le retirer
+# supprime toutes les failles de ses dependances embarquees -- dont tar 6.2.1,
+# CVE-2026-59873 en CRITICAL, qu'aucune modification de package.json ne peut
+# atteindre puisqu'elle n'est pas dans les dependances du projet.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
+           /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack
+
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+
+RUN addgroup --system --gid 1001 nodejs
+RUN adduser --system --uid 1001 nextjs
+
+COPY --from=builder /app/client/public ./public
+
+# Set the correct permission for prerender cache
+RUN mkdir .next
+RUN chown nextjs:nodejs .next
+
+# Automatically leverage output traces to reduce image size
+# https://nextjs.org/docs/advanced-features/output-file-tracing
+COPY --from=builder --chown=nextjs:nodejs /app/client/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/client/.next/static ./.next/static
+
+USER nextjs
+
+EXPOSE 3002
+
+ENV PORT=3002
+ENV HOSTNAME="0.0.0.0"
+
+CMD ["node", "server.js"]

@@ -1,0 +1,64 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+build/
+*.tsbuildinfo
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# IDE specific files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Docker volumes
+docker-volumes/
+clickhouse-data/
+
+# Testing
+coverage/
+.nyc_output/
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# Production
+.env.production 
+
+.cursor/
+
+.claude/
+
+.codex/
+
+.agents/
+
+.deepsec/
+
+# Veridian : upstream ignore .github/ (leurs workflows sont trackés car ajoutés
+# avant cette règle). Résultat, tout nouveau workflow est ignoré EN SILENCE.
+# On lève la règle, notre CI de build vit ici.
+# .github/
+
+.impeccable/critique
+# Écrit par la CI (rapporteur JSON de vitest) — jamais versionné.
+resultats-tests.json
+server/GeoLite2-*.mmdb

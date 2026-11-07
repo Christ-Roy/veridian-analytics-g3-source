@@ -1,0 +1,232 @@
+"use client";
+
+import { useExtracted } from "next-intl";
+import { ConfirmationModal } from "@/components/ConfirmationModal";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { ArrowRight, ChevronDown, ChevronUp, Copy, Edit, Eye, MousePointerClick, Trash2 } from "lucide-react";
+import { useState } from "react";
+import { toast } from "@/components/ui/sonner";
+import { useDeleteFunnel } from "../../../../api/analytics/hooks/funnels/useDeleteFunnel";
+import { useGetFunnel } from "../../../../api/analytics/hooks/funnels/useGetFunnel";
+import { FunnelStepType, SavedFunnel } from "../../../../api/analytics/endpoints";
+import { ThreeDotLoader } from "../../../../components/Loaders";
+import { EditFunnelDialog } from "./EditFunnel";
+import { Funnel } from "./Funnel";
+import { EventTypeIcon } from "../../../../components/EventIcons";
+import { resolvePropertyFilters, targetTypeToEventType } from "../../../../lib/events";
+
+interface FunnelRowProps {
+  funnel: SavedFunnel;
+  index: number;
+}
+
+export function FunnelRow({ funnel, index }: FunnelRowProps) {
+  const t = useExtracted();
+
+  const stepTypeLabels: Record<FunnelStepType, string> = {
+    page: t("Page"),
+    event: t("Event"),
+    outbound: t("Outbound"),
+    button_click: t("Button"),
+    form_submit: t("Form"),
+    copy: t("Copy"),
+  };
+  const [expanded, setExpanded] = useState(index === 0);
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [isCloneModalOpen, setIsCloneModalOpen] = useState(false);
+
+  // Funnel data fetching
+  const {
+    data,
+    isError,
+    error,
+    isLoading: isPending,
+    isSuccess,
+  } = useGetFunnel(
+    expanded
+      ? {
+          steps: funnel.steps,
+        }
+      : undefined
+  );
+
+  // Delete funnel mutation
+  const { mutate: deleteFunnel, isPending: isDeleting } = useDeleteFunnel();
+
+  // Handle expansion
+  const handleExpand = () => {
+    setExpanded(!expanded);
+  };
+
+  // Handle funnel deletion
+  const handleDeleteFunnel = async () => {
+    try {
+      await deleteFunnel(funnel.id);
+      toast.success(t("Funnel deleted successfully"));
+    } catch (error) {
+      console.error("Error deleting funnel:", error);
+      throw error; // Let the ConfirmationModal handle the error display
+    }
+  };
+
+  return (
+    <Card className="mb-4 overflow-hidden">
+      {/* Header row (always visible) */}
+      <div className="flex items-center justify-between py-2 px-5">
+        <div className="flex items-center grow cursor-pointer transition-colors" onClick={handleExpand}>
+          <div className="mt-1 text-xs text-neutral-500 dark:text-neutral-400 flex flex-col gap-3">
+            {/* Steps visualization */}
+            <div className="flex flex-wrap gap-1">
+              <h3 className="font-medium text-neutral-900 dark:text-neutral-100 text-base mr-2">{funnel.name}</h3>
+              {funnel.steps.map((step, index) => {
+                const propertyFilters = resolvePropertyFilters(step);
+                return (
+                  <div key={index} className="flex items-center">
+                    {index > 0 && <ArrowRight className="h-3 w-3 mx-1 text-neutral-400" />}
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span className="rounded bg-neutral-100 dark:bg-neutral-800 px-1.5 py-0.5 whitespace-nowrap overflow-hidden text-ellipsis flex items-center cursor-default">
+                          <EventTypeIcon type={targetTypeToEventType(step.type)} className="h-3 w-3 mr-1" />
+                          <span className="max-w-[120px] overflow-hidden text-ellipsis inline-block">
+                            {step.name || step.value || stepTypeLabels[step.type] || t("Event")}
+                            {propertyFilters.length > 0 && <span className="text-xs text-yellow-400 ml-1">*</span>}
+                          </span>
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom" className="text-xs">
+                        <div>
+                          <span className="font-semibold">{stepTypeLabels[step.type] || t("Event")}:</span>{" "}
+                          {step.value || t("Any")}
+                        </div>
+                        {step.name && (
+                          <div>
+                            <span className="font-semibold">{t("Label")}:</span> {step.name}
+                          </div>
+                        )}
+                        {propertyFilters.length > 0 && (
+                          <div>
+                            <span className="font-semibold">{t("Property")}:</span>{" "}
+                            {propertyFilters.map(f => `${f.key} = ${f.value}`).join(", ")}
+                          </div>
+                        )}
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-4">
+          <div className="flex">
+            {/* Edit button */}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={e => {
+                    e.stopPropagation();
+                    setIsEditModalOpen(true);
+                  }}
+                >
+                  <Edit className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{t("Edit Funnel")}</TooltipContent>
+            </Tooltip>
+
+            {/* Clone button */}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={e => {
+                    e.stopPropagation();
+                    setIsCloneModalOpen(true);
+                  }}
+                >
+                  <Copy className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{t("Clone Funnel")}</TooltipContent>
+            </Tooltip>
+
+            {/* Delete button */}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={e => {
+                    e.stopPropagation();
+                    setIsDeleteModalOpen(true);
+                  }}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{t("Delete Funnel")}</TooltipContent>
+            </Tooltip>
+
+            <Button variant="ghost" size="icon" onClick={handleExpand}>
+              {expanded ? <ChevronUp strokeWidth={3} /> : <ChevronDown strokeWidth={3} />}
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      {/* Expandable content */}
+      {expanded && (
+        <div className="border-t border-neutral-100 dark:border-neutral-800">
+          <div className="p-4">
+            {isPending ? (
+              <ThreeDotLoader className="h-[400px]" />
+            ) : isError ? (
+              <div className="text-red-500 p-4 text-center">
+                {t("Error loading funnel:")} {error instanceof Error ? error.message : t("Unknown error")}
+              </div>
+            ) : data && data.length > 0 ? (
+              <Funnel data={data} steps={funnel.steps} isError={isError} error={error} isPending={isPending} />
+            ) : (
+              <div className="text-center p-6 text-neutral-500">{t("No funnel data available")}</div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      <ConfirmationModal
+        title={t("Delete Funnel")}
+        description={t('Are you sure you want to delete "{name}"? This action cannot be undone.', { name: funnel.name })}
+        isOpen={isDeleteModalOpen}
+        setIsOpen={setIsDeleteModalOpen}
+        onConfirm={handleDeleteFunnel}
+        primaryAction={{
+          children: isDeleting ? t("Deleting...") : t("Delete"),
+          variant: "destructive",
+        }}
+      />
+
+      {/* Edit Funnel Modal */}
+      {isEditModalOpen && (
+        <EditFunnelDialog funnel={funnel} isOpen={isEditModalOpen} onClose={() => setIsEditModalOpen(false)} />
+      )}
+
+      {/* Clone Funnel Modal */}
+      {isCloneModalOpen && (
+        <EditFunnelDialog
+          funnel={funnel}
+          isOpen={isCloneModalOpen}
+          onClose={() => setIsCloneModalOpen(false)}
+          isCloneMode={true}
+        />
+      )}
+    </Card>
+  );
+}

@@ -1,0 +1,11 @@
+<svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+  <title>Veridian</title>
+  <!-- Barres montantes : la marque Veridian, reprise du logo de G2 pour rester
+       cohérent d'une génération à l'autre. currentColor absent volontairement :
+       les couleurs de marque doivent survivre au thème clair comme sombre. -->
+  <g transform="translate(6 6)">
+    <rect x="0" y="30" width="13" height="22" rx="3" fill="#3b82f6"/>
+    <rect x="19" y="16" width="13" height="36" rx="3" fill="#2563eb"/>
+    <rect x="38" y="0" width="13" height="52" rx="3" fill="#1d4ed8"/>
+  </g>
+</svg>

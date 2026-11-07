@@ -1,0 +1,235 @@
+"use client";
+
+import { Skeleton } from "@/components/ui/skeleton";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { cn, formatSecondsAsMinutesAndSeconds } from "@/lib/utils";
+import NumberFlow from "@number-flow/react";
+import { ArrowDown, ArrowUp, ChevronDown, ChevronUp } from "lucide-react";
+import { useExtracted } from "next-intl";
+import { useState } from "react";
+import { useGetOverview } from "../../../../../api/analytics/hooks/useGetOverview";
+import { useGetOverviewBucketed } from "../../../../../api/analytics/hooks/useGetOverviewBucketed";
+import { StatType, useStore } from "../../../../../lib/store";
+import { SparklinesChart } from "./SparklinesChart";
+
+export const ChangePercentage = ({
+  current,
+  previous,
+  reverseColor,
+}: {
+  current: number;
+  previous: number;
+  reverseColor?: boolean;
+}) => {
+  const change = ((current - previous) / previous) * 100;
+
+  if (previous === 0) {
+    if (current === 0) {
+      return <div className="text-sm">0%</div>;
+    }
+    return <div className="text-sm">+999%</div>;
+  }
+
+  if (change === 0) {
+    return <div className="text-sm">0%</div>;
+  }
+
+  return (
+    <div
+      className={cn(
+        "text-xs flex items-center gap-0.5",
+        (reverseColor ? -change : change) > 0 ? "text-green-400" : "text-red-400"
+      )}
+    >
+      {change > 0 ? <ArrowUp className="w-3 h-3" strokeWidth={3} /> : <ArrowDown className="w-3 h-3" strokeWidth={3} />}
+      {Math.abs(change).toFixed(1)}%
+    </div>
+  );
+};
+
+const Stat = ({
+  title,
+  id,
+  value,
+  previous,
+  valueFormatter,
+  isLoading,
+  decimals,
+  postfix,
+  reverseColor,
+}: {
+  title: string;
+  id: StatType;
+  value: number;
+  previous: number;
+  valueFormatter?: (value: number) => string;
+  isLoading: boolean;
+  decimals?: number;
+  postfix?: string;
+  reverseColor?: boolean;
+}) => {
+  const { selectedStat, setSelectedStat, site, bucket, time } = useStore();
+  const [isHovering, setIsHovering] = useState(false);
+
+  // Consolidated bucketed data for sparklines - automatically handles both modes
+  const { data } = useGetOverviewBucketed({
+    site,
+    bucket,
+  });
+
+  // Filter and format sparklines data
+  const sparklinesData =
+    data
+      ?.filter(d => {
+        // For past-minutes mode, ensure we only show data within the specified time range
+        if (time.mode === "past-minutes") {
+          const timestamp = new Date(d.time);
+          const now = new Date();
+          const startTime = new Date(now.getTime() - time.pastMinutesStart * 60 * 1000);
+          return timestamp >= startTime && timestamp <= now;
+        }
+        return true;
+      })
+      .map((d: any) => ({
+        value: d[id],
+        time: d.time,
+      })) ?? [];
+
+  return (
+    <div
+      className={cn(
+        "flex flex-col cursor-pointer border-r border-neutral-100 dark:border-neutral-800 last:border-r-0 text-nowrap",
+        selectedStat === id && "bg-neutral-0 dark:bg-neutral-850"
+      )}
+      onClick={() => setSelectedStat(id)}
+      onMouseEnter={() => setIsHovering(true)}
+      onMouseLeave={() => setIsHovering(false)}
+    >
+      <div className="flex flex-col px-3 py-2">
+        <div className="text-xs font-medium text-muted-foreground">{title}</div>
+        <div className="text-2xl font-medium flex gap-2 items-center justify-between">
+          {isLoading ? (
+            <>
+              <Skeleton className="w-[60px] h-9 rounded-md" />
+              <Skeleton className="w-[50px] h-5 rounded-md" />
+            </>
+          ) : (
+            <>
+              {valueFormatter ? (
+                valueFormatter(value)
+              ) : (
+                <span>
+                  {
+                    <Tooltip>
+                      <TooltipTrigger>
+                        <NumberFlow
+                          respectMotionPreference={false}
+                          value={decimals ? Number(value.toFixed(decimals)) : value}
+                          format={{ notation: "compact" }}
+                        />
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <NumberFlow
+                          respectMotionPreference={false}
+                          value={decimals ? Number(value.toFixed(decimals)) : value}
+                          format={{ notation: "standard" }}
+                        />
+                        {postfix && <span>{postfix}</span>}
+                      </TooltipContent>
+                    </Tooltip>
+                  }
+                  {postfix && <span>{postfix}</span>}
+                </span>
+              )}
+              <ChangePercentage current={value} previous={previous} reverseColor={reverseColor} />
+            </>
+          )}
+        </div>
+      </div>
+      <div className="h-[40px] -mt-4">
+        <SparklinesChart data={sparklinesData} isHovering={isHovering} />
+      </div>
+    </div>
+  );
+};
+
+export function Overview() {
+  const { site } = useStore();
+  const t = useExtracted();
+
+  // Current period - automatically handles both regular time-based and past-minutes queries
+  const {
+    data: overviewData,
+    isFetching: isOverviewFetching,
+    isLoading: isOverviewLoading,
+    error: overviewError,
+  } = useGetOverview({
+    site,
+  });
+
+  // Previous period - automatically handles both regular time-based and past-minutes queries
+  const { data: overviewDataPrevious, isLoading: isOverviewLoadingPrevious } = useGetOverview({
+    site,
+    periodTime: "previous",
+  });
+
+  const isLoading = isOverviewLoading || isOverviewLoadingPrevious;
+
+  const currentUsers = overviewData?.users ?? 0;
+  const previousUsers = overviewDataPrevious?.users ?? 0;
+
+  const currentSessions = overviewData?.sessions ?? 0;
+  const previousSessions = overviewDataPrevious?.sessions ?? 0;
+
+  const currentPageviews = overviewData?.pageviews ?? 0;
+  const previousPageviews = overviewDataPrevious?.pageviews ?? 0;
+
+  const currentPagesPerSession = overviewData?.pages_per_session ?? 0;
+  const previousPagesPerSession = overviewDataPrevious?.pages_per_session ?? 0;
+
+  const currentBounceRate = overviewData?.bounce_rate ?? 0;
+  const previousBounceRate = overviewDataPrevious?.bounce_rate ?? 0;
+
+  const currentSessionDuration = overviewData?.session_duration ?? 0;
+  const previousSessionDuration = overviewDataPrevious?.session_duration ?? 0;
+
+  return (
+    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-0 items-center">
+      <Stat title={t("Unique Users")} id="users" value={currentUsers} previous={previousUsers} isLoading={isLoading} />
+      <Stat title={t("Sessions")} id="sessions" value={currentSessions} previous={previousSessions} isLoading={isLoading} />
+      <Stat
+        title={t("Pageviews")}
+        id="pageviews"
+        value={currentPageviews}
+        previous={previousPageviews}
+        isLoading={isLoading}
+      />
+      <Stat
+        title={t("Pages per Session")}
+        id="pages_per_session"
+        value={currentPagesPerSession}
+        previous={previousPagesPerSession}
+        decimals={1}
+        isLoading={isLoading}
+      />
+      <Stat
+        title={t("Bounce Rate")}
+        id="bounce_rate"
+        value={currentBounceRate}
+        previous={previousBounceRate}
+        isLoading={isLoading}
+        postfix="%"
+        decimals={1}
+        reverseColor={true}
+      />
+      <Stat
+        title={t("Session Duration")}
+        id="session_duration"
+        value={currentSessionDuration}
+        previous={previousSessionDuration}
+        isLoading={isLoading}
+        valueFormatter={formatSecondsAsMinutesAndSeconds}
+      />
+    </div>
+  );
+}

@@ -1,0 +1,12 @@
+-- Capture des valeurs de champs de formulaire, par site.
+--
+-- Desactivee par defaut : la colonne n'ouvre aucune collecte tant qu'un
+-- operateur ne l'active pas explicitement sur un site donne. Les sites
+-- existants gardent donc exactement le comportement qu'ils avaient.
+--
+-- Le nom de colonne est en camelCase QUOTE, pas en snake_case : ce schema
+-- drizzle ne declare aucun `casing`, la propriete TypeScript sert donc telle
+-- quelle de nom de colonne. Cf. "trackFormInteractions" dans la table `sites`.
+--
+-- IF NOT EXISTS pour rester rejouable, a l'identique de la migration 0013.
+ALTER TABLE "sites" ADD COLUMN IF NOT EXISTS "trackFormFields" boolean DEFAULT false;

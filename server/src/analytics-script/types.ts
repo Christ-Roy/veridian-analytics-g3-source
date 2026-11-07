@@ -1,0 +1,183 @@
+export interface ScriptConfig {
+  namespace: string;
+  analyticsHost: string;
+  siteId: string;
+  visitorId: string;
+  debounceDuration: number;
+  autoTrackPageview: boolean;
+  autoTrackSpa: boolean;
+  trackQuerystring: boolean;
+  trackOutbound: boolean;
+  enableWebVitals: boolean;
+  trackErrors: boolean;
+  enableSessionReplay: boolean;
+  sessionReplayBatchSize: number;
+  sessionReplayBatchInterval: number;
+  sessionReplayMaskTextSelectors: string[];
+  skipPatterns: string[];
+  maskPatterns: string[];
+  // Session replay rrweb options
+  sessionReplayBlockClass?: string;
+  sessionReplayBlockSelector?: string;
+  sessionReplayIgnoreClass?: string;
+  sessionReplayIgnoreSelector?: string;
+  sessionReplayMaskTextClass?: string;
+  sessionReplayMaskAllInputs?: boolean;
+  sessionReplayMaskInputOptions?: Record<string, boolean>;
+  sessionReplayCollectFonts?: boolean;
+  sessionReplaySampling?: Record<string, any>;
+  sessionReplaySlimDOMOptions?: Record<string, boolean> | boolean;
+  sessionReplaySampleRate?: number; // 0-100, percentage of sessions to record
+  trackButtonClicks: boolean;
+  trackCopy: boolean;
+  trackFormInteractions: boolean;
+  /**
+   * Capture des VALEURS saisies dans les formulaires. Désactivée par défaut,
+   * et sans effet si `trackFormInteractions` est lui-même désactivé.
+   */
+  trackFormFields: boolean;
+  tag: string;
+  featureFlagsEnabled: boolean;
+  featureFlags: Record<string, FeatureFlagAssignment>;
+}
+
+export interface FeatureFlagAssignment {
+  key: string;
+  value: unknown;
+  flagType: "boolean" | "multivariate" | "remote_config";
+  payload?: unknown;
+  variant?: string;
+  conditionSet?: string;
+  version: number;
+  reason: "disabled" | "target_mismatch" | "rollout" | "variant" | "remote_config" | "fallthrough";
+  matched: boolean;
+  rolloutPercentage: number;
+}
+
+export interface BasePayload {
+  site_id: string;
+  hostname: string;
+  pathname: string;
+  querystring: string;
+  screenWidth: number;
+  screenHeight: number;
+  language: string;
+  page_title: string;
+  referrer: string;
+  user_id?: string;
+  /** Identité durable du navigateur (localStorage), pour ne pas dépendre d'une empreinte IP + User-Agent. */
+  anonymous_id?: string;
+  tag?: string;
+  feature_flags?: Record<string, string>;
+  _bs?: number; // Client-side weighted bot detection score
+  _bsm?: number; // Client-side bot detection signal bitmask
+}
+
+export interface TrackingPayload extends BasePayload {
+  type:
+    | "pageview"
+    | "custom_event"
+    | "outbound"
+    | "performance"
+    | "error"
+    | "button_click"
+    | "copy"
+    | "form_submit"
+    | "input_change";
+  event_name?: string;
+  properties?: string;
+  // Web vitals metrics
+  lcp?: number | null;
+  cls?: number | null;
+  inp?: number | null;
+  fcp?: number | null;
+  ttfb?: number | null;
+  tag?: string;
+}
+
+export interface ButtonClickProperties {
+  text?: string;
+  [key: string]: string | undefined; // Additional data-rybbit-* attributes
+}
+
+export interface CopyProperties {
+  text: string;
+  textLength?: number; // Only sent if text was truncated
+  sourceElement: string;
+}
+
+export interface FormSubmitProperties {
+  /** Clé stable du formulaire, utilisable comme critère d'objectif. */
+  formKey: string;
+  formId: string;
+  formName: string;
+  /** Attribut `action` tel qu'écrit dans le HTML ; vide s'il est absent. */
+  formAction: string;
+  method: string;
+  fieldCount: number;
+  ariaLabel?: string;
+  /** Valeurs saisies, si `trackFormFields` est actif. */
+  [key: string]: string | number | undefined;
+}
+
+export interface InputChangeProperties {
+  element: string; // "input" | "select" | "textarea"
+  inputType?: string; // For inputs: "text", "email", "checkbox", etc.
+  inputName: string; // Name, id, aria-label, or placeholder attribute
+  formId?: string; // Parent form id if within a form
+  formName?: string; // Parent form name if within a form
+  [key: string]: string | undefined;
+}
+
+export interface WebVitalsData {
+  lcp: number | null;
+  cls: number | null;
+  inp: number | null;
+  fcp: number | null;
+  ttfb: number | null;
+}
+
+export interface ErrorProperties {
+  filename?: string;
+  lineno?: number | string;
+  colno?: number | string;
+  [key: string]: any;
+}
+
+export interface RybbitAPI {
+  pageview: () => void;
+  event: (name: string, properties?: Record<string, any>) => void;
+  error: (error: Error, properties?: ErrorProperties) => void;
+  trackOutbound: (url: string, text?: string, target?: string) => void;
+  identify: (userId: string, traits?: Record<string, unknown>) => void;
+  setTraits: (traits: Record<string, unknown>) => void;
+  clearUserId: () => void;
+  getUserId: () => string | null;
+  flag: <T = unknown>(key: string, fallback?: T) => T;
+  flagPayload: <T = unknown>(key: string, fallback?: T) => T;
+  flags: () => Record<string, unknown>;
+  flagPayloads: () => Record<string, unknown>;
+  onReady: (callback: (api: RybbitAPI) => void) => void;
+  startSessionReplay: () => void;
+  stopSessionReplay: () => void;
+  isSessionReplayActive: () => boolean;
+}
+
+export interface SessionReplayEvent {
+  type: string | number;
+  data: any;
+  timestamp: number;
+}
+
+export interface SessionReplayBatch {
+  userId: string;
+  /** Durable browser id, the same one the tracker sends: lets the server give the replay the visit's user_id. */
+  anonymous_id?: string;
+  events: SessionReplayEvent[];
+  metadata?: {
+    pageUrl: string;
+    viewportWidth?: number;
+    viewportHeight?: number;
+    language?: string;
+  };
+}
